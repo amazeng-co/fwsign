@@ -2,7 +2,6 @@
 
 use anyhow::{bail, ensure, Context, Result};
 use sha2::Digest;
-use std::collections::BTreeMap;
 use std::fmt;
 
 use crate::keys::{aes_ctr, EncKey, Key};
@@ -570,7 +569,7 @@ pub fn verify(b: &[u8], key: Option<&Key>) -> Result<Verified, VerifyError> {
 
 /// Intel HEX → (bytes from min to max address, gaps filled with 0xff, min address).
 pub fn hex_to_bin(text: &str) -> Result<(Vec<u8>, u32)> {
-    let mut mem = BTreeMap::new();
+    let mut records: Vec<(u32, Vec<u8>)> = Vec::new();
     let mut upper = 0u32;
     for (n, line) in text
         .lines()
@@ -595,11 +594,8 @@ pub fn hex_to_bin(text: &str) -> Result<(Vec<u8>, u32)> {
         let addr = u16::from_be_bytes([rec[1], rec[2]]) as u32;
         let data = &rec[4..rec.len() - 1];
         match rec[3] {
-            0 => {
-                for (i, &d) in data.iter().enumerate() {
-                    mem.insert(upper + addr + i as u32, d);
-                }
-            }
+            0 if !data.is_empty() => records.push((upper + addr, data.to_vec())),
+            0 => {}
             1 => break,
             2 => upper = (u16::from_be_bytes([data[0], data[1]]) as u32) << 4,
             4 => upper = (u16::from_be_bytes([data[0], data[1]]) as u32) << 16,
@@ -607,12 +603,21 @@ pub fn hex_to_bin(text: &str) -> Result<(Vec<u8>, u32)> {
             t => bail!("unknown hex record type {t} on line {}", n + 1),
         }
     }
-    let (Some((&min, _)), Some((&max, _))) = (mem.first_key_value(), mem.last_key_value()) else {
-        bail!("hex file contains no data");
-    };
-    let mut out = vec![0xff; (max - min + 1) as usize];
-    for (a, d) in mem {
-        out[(a - min) as usize] = d;
+    let min = records
+        .iter()
+        .map(|r| r.0)
+        .min()
+        .context("hex file contains no data")?;
+    let end = records
+        .iter()
+        .map(|r| r.0 as usize + r.1.len())
+        .max()
+        .unwrap();
+    let mut out = vec![0xff; end - min as usize];
+    // later records win, as in python-intelhex
+    for (a, d) in records {
+        let o = (a - min) as usize;
+        out[o..o + d.len()].copy_from_slice(&d);
     }
     Ok((out, min))
 }
@@ -620,44 +625,53 @@ pub fn hex_to_bin(text: &str) -> Result<(Vec<u8>, u32)> {
 /// Intel HEX writer laid out like python-intelhex's tofile(): 16-byte records,
 /// split at gaps and 64K boundaries, type-04 records only when data is above 64K.
 pub fn bin_to_hex(segments: &[(u32, Vec<u8>)]) -> String {
-    let mut mem = BTreeMap::new();
-    for (base, data) in segments {
-        for (i, &d) in data.iter().enumerate() {
-            mem.insert(base + i as u32, d);
+    // merge into sorted, disjoint runs of contiguous bytes
+    let mut segs: Vec<&(u32, Vec<u8>)> = segments.iter().filter(|s| !s.1.is_empty()).collect();
+    segs.sort_by_key(|s| s.0);
+    let mut runs: Vec<(u32, Vec<u8>)> = Vec::new();
+    for (base, data) in segs {
+        match runs.last_mut() {
+            Some((start, run)) if *base as usize <= *start as usize + run.len() => {
+                let off = (base - *start) as usize;
+                let keep = data.len().min(run.len() - off);
+                run[off..off + keep].copy_from_slice(&data[..keep]);
+                run.extend_from_slice(&data[keep..]);
+            }
+            _ => runs.push((*base, data.clone())),
         }
     }
-    let mem: Vec<(u32, u8)> = mem.into_iter().collect();
-    let need_ela = mem.last().is_some_and(|&(a, _)| a > 0xffff);
-    let mut out = String::new();
+
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(segments.iter().map(|s| s.1.len()).sum::<usize>() * 3);
     let mut rec = |kind: u8, addr: u16, data: &[u8]| {
-        let mut r = vec![data.len() as u8];
-        r.extend(addr.to_be_bytes());
-        r.push(kind);
-        r.extend(data);
-        r.push(r.iter().fold(0u8, |a, &x| a.wrapping_sub(x)));
+        let [hi, lo] = addr.to_be_bytes();
+        let head = [data.len() as u8, hi, lo, kind];
+        let sum = head.iter().chain(data).fold(0u8, |a, &x| a.wrapping_sub(x));
         out.push(':');
-        out.extend(r.iter().map(|b| format!("{b:02X}")));
+        for &b in head.iter().chain(data).chain([sum].iter()) {
+            out.push(HEX[(b >> 4) as usize] as char);
+            out.push(HEX[(b & 0xf) as usize] as char);
+        }
         out.push('\n');
     };
+    let need_ela = runs
+        .last()
+        .is_some_and(|(s, d)| *s as usize + d.len() - 1 > 0xffff);
     let mut high = None;
-    let mut i = 0;
-    while i < mem.len() {
-        let start = mem[i].0;
-        if need_ela && high != Some(start >> 16) {
-            high = Some(start >> 16);
-            rec(4, 0, &((start >> 16) as u16).to_be_bytes());
+    for (start, data) in &runs {
+        let mut pos = 0;
+        while pos < data.len() {
+            let addr = start + pos as u32;
+            if need_ela && high != Some(addr >> 16) {
+                high = Some(addr >> 16);
+                rec(4, 0, &((addr >> 16) as u16).to_be_bytes());
+            }
+            let n = 16
+                .min(data.len() - pos)
+                .min(0x10000 - (addr & 0xffff) as usize);
+            rec(0, addr as u16, &data[pos..pos + n]);
+            pos += n;
         }
-        let mut j = i;
-        while j < mem.len()
-            && j - i < 16
-            && mem[j].0 == start + (j - i) as u32
-            && mem[j].0 >> 16 == start >> 16
-        {
-            j += 1;
-        }
-        let data: Vec<u8> = mem[i..j].iter().map(|&(_, d)| d).collect();
-        rec(0, start as u16, &data);
-        i = j;
     }
     rec(1, 0, &[]);
     out
