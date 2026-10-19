@@ -131,20 +131,28 @@ fn parse_int(s: &str) -> Result<u64, String> {
 }
 
 fn u32_arg(v: Option<u64>, name: &str) -> Result<u32> {
-    v.unwrap_or(0).try_into().with_context(|| format!("{name} does not fit in 32 bits"))
+    v.unwrap_or(0)
+        .try_into()
+        .with_context(|| format!("{name} does not fit in 32 bits"))
 }
 
 fn is_hex(path: &str) -> bool {
-    Path::new(path).extension().is_some_and(|e| e.eq_ignore_ascii_case("hex"))
+    Path::new(path)
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("hex"))
 }
 
 fn read_image(path: &str) -> Result<(Vec<u8>, Option<u32>)> {
     if is_hex(path) {
-        let text = std::fs::read_to_string(path).with_context(|| format!("Input file not found: {path}"))?;
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("Input file not found: {path}"))?;
         let (data, base) = image::hex_to_bin(&text)?;
         Ok((data, Some(base)))
     } else {
-        Ok((std::fs::read(path).with_context(|| format!("Input file not found: {path}"))?, None))
+        Ok((
+            std::fs::read(path).with_context(|| format!("Input file not found: {path}"))?,
+            None,
+        ))
     }
 }
 
@@ -152,14 +160,21 @@ fn sign(a: SignArgs) -> Result<()> {
     let align: usize = a.align.parse()?;
     let enc = a.encrypt.as_deref().map(EncKey::load).transpose()?;
     let aes256 = a.encrypt_keylen == "256";
-    let hmac_sha = if a.hmac_sha == "512" { Sha::S512 } else { Sha::S256 };
+    let hmac_sha = if a.hmac_sha == "512" {
+        Sha::S512
+    } else {
+        Sha::S256
+    };
     let security_counter = match a.security_counter.as_deref() {
         None => None,
         Some(s) if s.eq_ignore_ascii_case("auto") => {
             let v = a.version;
             Some(((v.major as u32) << 24) + ((v.minor as u32) << 16) + v.revision as u32)
         }
-        Some(s) => Some(u32::try_from(parse_int(s).map_err(anyhow::Error::msg)?).context("security counter too large")?),
+        Some(s) => Some(
+            u32::try_from(parse_int(s).map_err(anyhow::Error::msg)?)
+                .context("security counter too large")?,
+        ),
     };
     let o = Opts {
         version: a.version,
@@ -174,10 +189,18 @@ fn sign(a: SignArgs) -> Result<()> {
         slot_size: a.slot_size as usize,
         max_sectors: a.max_sectors,
         overwrite_only: a.overwrite_only,
-        endian: if a.endian == "big" { Endian::Big } else { Endian::Little },
+        endian: if a.endian == "big" {
+            Endian::Big
+        } else {
+            Endian::Little
+        },
         load_addr: u32_arg(a.load_addr, "--load-addr")?,
         rom_fixed: u32_arg(a.rom_fixed, "--rom-fixed")?,
-        erased_val: if a.erased_val.as_deref() == Some("0") { 0 } else { 0xff },
+        erased_val: if a.erased_val.as_deref() == Some("0") {
+            0
+        } else {
+            0xff
+        },
         security_counter,
         non_bootable: a.non_bootable,
         public_key_full: a.public_key_format == "full",
@@ -192,13 +215,21 @@ fn sign(a: SignArgs) -> Result<()> {
         clear: a.clear,
         hmac_sha,
         save_enctlv: a.save_enctlv,
-        enc_tlv_len: enc.as_ref().map(|e| e.tlv_len(if aes256 { 32 } else { 16 }, hmac_sha)),
+        enc_tlv_len: enc
+            .as_ref()
+            .map(|e| e.tlv_len(if aes256 { 32 } else { 16 }, hmac_sha)),
     };
 
     let (data, mut base) = read_image(&a.infile)?;
     if o.pad_header {
         // the new header occupies the bytes in front of the input
-        base = base.map(|b| if b != 0 { b.wrapping_sub(o.header_size as u32) } else { b });
+        base = base.map(|b| {
+            if b != 0 {
+                b.wrapping_sub(o.header_size as u32)
+            } else {
+                b
+            }
+        });
     }
     let key = a.key.as_deref().map(Key::load).transpose()?;
     let mut img = image::create(&data, &o, key.as_ref(), enc.as_ref())?;
@@ -206,7 +237,9 @@ fn sign(a: SignArgs) -> Result<()> {
     if is_hex(&a.outfile) {
         let base = match a.hex_addr {
             Some(h) => u32::try_from(h).context("--hex-addr does not fit in 32 bits")?,
-            None => base.context("No address exists in input file neither was it provided by user")?,
+            None => {
+                base.context("No address exists in input file neither was it provided by user")?
+            }
         };
         let mut segs = vec![(base, img)];
         if o.pad {
@@ -222,13 +255,22 @@ fn sign(a: SignArgs) -> Result<()> {
     Ok(())
 }
 
-fn getpub(key: &str, encoding: Option<String>, lang: Option<String>, output: Option<String>, suffix: &str) -> Result<()> {
+fn getpub(
+    key: &str,
+    encoding: Option<String>,
+    lang: Option<String>,
+    output: Option<String>,
+    suffix: &str,
+) -> Result<()> {
     let enc = match (encoding.as_deref(), lang.as_deref()) {
         (Some(e), _) => e,
         (None, Some("rust")) => "lang-rust",
         _ => "lang-c",
     };
-    ensure!(suffix.is_empty() || enc.starts_with("lang-"), "`--name-suffix` is only meaningful for lang-c / lang-rust encodings");
+    ensure!(
+        suffix.is_empty() || enc.starts_with("lang-"),
+        "`--name-suffix` is only meaningful for lang-c / lang-rust encodings"
+    );
     let key = Key::load(key)?;
     let out: Vec<u8> = match enc {
         "lang-c" => {
@@ -257,7 +299,11 @@ fn getpub(key: &str, encoding: Option<String>, lang: Option<String>, output: Opt
 fn verify(key: Option<String>, imgfile: &str) -> Result<bool> {
     let key = key.as_deref().map(Key::load).transpose()?;
     let data = if is_hex(imgfile) {
-        image::hex_to_bin(&std::fs::read_to_string(imgfile).with_context(|| format!("Image file {imgfile} not found"))?)?.0
+        image::hex_to_bin(
+            &std::fs::read_to_string(imgfile)
+                .with_context(|| format!("Image file {imgfile} not found"))?,
+        )?
+        .0
     } else {
         std::fs::read(imgfile).with_context(|| format!("Image file {imgfile} not found"))?
     };
@@ -285,9 +331,17 @@ fn hex(b: &[u8]) -> String {
 
 fn main() {
     let res = match Cli::parse().cmd {
-        Cmd::Keygen { password: true, .. } => Err(anyhow::anyhow!("password-protected keys are not supported yet")),
+        Cmd::Keygen { password: true, .. } => Err(anyhow::anyhow!(
+            "password-protected keys are not supported yet"
+        )),
         Cmd::Keygen { key, kind, .. } => Key::generate(&kind, &key),
-        Cmd::Getpub { key, encoding, lang, output, name_suffix } => getpub(&key, encoding, lang, output, &name_suffix),
+        Cmd::Getpub {
+            key,
+            encoding,
+            lang,
+            output,
+            name_suffix,
+        } => getpub(&key, encoding, lang, output, &name_suffix),
         Cmd::Verify { key, imgfile } => match verify(key, &imgfile) {
             Ok(false) => std::process::exit(1),
             r => r.map(|_| ()),

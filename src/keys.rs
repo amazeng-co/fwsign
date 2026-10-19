@@ -2,7 +2,9 @@
 
 use anyhow::{bail, ensure, Context, Result};
 use ed25519_dalek::{Signer, Verifier};
-use p256::pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey, LineEnding};
+use p256::pkcs8::{
+    DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey, LineEnding,
+};
 use rand_core::OsRng;
 
 use crate::image::{tlv, Sha};
@@ -14,39 +16,56 @@ pub enum EncKey {
 }
 
 // No pkcs8 support in x25519-dalek; X25519 SPKI / PKCS#8 DER have fixed prefixes.
-const X25519_SPKI_PREFIX: &[u8] = &[0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x03, 0x21, 0x00];
-const X25519_PKCS8_PREFIX: &[u8] = &[0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x04, 0x22, 0x04, 0x20];
+const X25519_SPKI_PREFIX: &[u8] = &[
+    0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x03, 0x21, 0x00,
+];
+const X25519_PKCS8_PREFIX: &[u8] = &[
+    0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x04, 0x22, 0x04, 0x20,
+];
 
 impl EncKey {
     /// Accepts the public key or the keypair, like imgtool's load_key().
     pub fn load(path: &str) -> Result<EncKey> {
-        let pem = std::fs::read_to_string(path).with_context(|| format!("cannot read key {path}"))?;
+        let pem =
+            std::fs::read_to_string(path).with_context(|| format!("cannot read key {path}"))?;
         if let Ok(k) = p256::PublicKey::from_public_key_pem(&pem) {
             return Ok(EncKey::P256(k));
         }
-        if let Ok(k) = p256::SecretKey::from_pkcs8_pem(&pem).or_else(|_| p256::SecretKey::from_sec1_pem(&pem)) {
+        if let Ok(k) =
+            p256::SecretKey::from_pkcs8_pem(&pem).or_else(|_| p256::SecretKey::from_sec1_pem(&pem))
+        {
             return Ok(EncKey::P256(k.public_key()));
         }
         if let Ok((_, der)) = p256::pkcs8::der::pem::decode_vec(pem.as_bytes()) {
-            let raw = |prefix: &[u8]| -> Option<[u8; 32]> { der.strip_prefix(prefix)?.try_into().ok() };
+            let raw =
+                |prefix: &[u8]| -> Option<[u8; 32]> { der.strip_prefix(prefix)?.try_into().ok() };
             if let Some(b) = raw(X25519_SPKI_PREFIX) {
                 return Ok(EncKey::X25519(b.into()));
             }
             if let Some(b) = raw(X25519_PKCS8_PREFIX) {
-                return Ok(EncKey::X25519((&x25519_dalek::StaticSecret::from(b)).into()));
+                return Ok(EncKey::X25519(
+                    (&x25519_dalek::StaticSecret::from(b)).into(),
+                ));
             }
         }
         bail!("{path}: unsupported encryption key (supported: ECDSA P-256, X25519 PEM)")
     }
 
     pub fn check_hmac(&self, hmac: Sha) -> Result<()> {
-        ensure!(hmac == Sha::S256 || matches!(self, EncKey::X25519(_)), "Currently only ECIES-X25519 supports HMAC-SHA512");
+        ensure!(
+            hmac == Sha::S256 || matches!(self, EncKey::X25519(_)),
+            "Currently only ECIES-X25519 supports HMAC-SHA512"
+        );
         Ok(())
     }
 
     /// Length of the ENC TLV value: ephemeral pubkey + mac + wrapped key.
     pub fn tlv_len(&self, keylen: usize, hmac: Sha) -> usize {
-        let pubk = if matches!(self, EncKey::P256(_)) { 65 } else { 32 };
+        let pubk = if matches!(self, EncKey::P256(_)) {
+            65
+        } else {
+            32
+        };
         pubk + hmac.digest(&[]).len() + keylen
     }
 
@@ -58,20 +77,30 @@ impl EncKey {
             EncKey::P256(pk) => {
                 let e = p256::ecdh::EphemeralSecret::random(&mut OsRng);
                 let pubk = p256::EncodedPoint::from(e.public_key()).as_bytes().to_vec();
-                (e.diffie_hellman(pk).raw_secret_bytes().to_vec(), pubk, tlv::ENCEC256)
+                (
+                    e.diffie_hellman(pk).raw_secret_bytes().to_vec(),
+                    pubk,
+                    tlv::ENCEC256,
+                )
             }
             EncKey::X25519(pk) => {
                 let e = x25519_dalek::EphemeralSecret::random_from_rng(OsRng);
                 let pubk = x25519_dalek::PublicKey::from(&e).as_bytes().to_vec();
-                let kind = if hmac == Sha::S512 { tlv::ENCX25519_SHA512 } else { tlv::ENCX25519 };
+                let kind = if hmac == Sha::S512 {
+                    tlv::ENCX25519_SHA512
+                } else {
+                    tlv::ENCX25519
+                };
                 (e.diffie_hellman(pk).as_bytes().to_vec(), pubk, kind)
             }
         };
         let n = plainkey.len();
         let mut derived = vec![0; n + hmac.digest(&[]).len()];
         match hmac {
-            Sha::S512 => hkdf::Hkdf::<sha2::Sha512>::new(None, &shared).expand(b"MCUBoot_ECIES_v1", &mut derived),
-            _ => hkdf::Hkdf::<sha2::Sha256>::new(None, &shared).expand(b"MCUBoot_ECIES_v1", &mut derived),
+            Sha::S512 => hkdf::Hkdf::<sha2::Sha512>::new(None, &shared)
+                .expand(b"MCUBoot_ECIES_v1", &mut derived),
+            _ => hkdf::Hkdf::<sha2::Sha256>::new(None, &shared)
+                .expand(b"MCUBoot_ECIES_v1", &mut derived),
         }
         .map_err(|_| anyhow::anyhow!("HKDF output too long"))?;
         let mut cipherkey = plainkey.to_vec();
@@ -85,8 +114,18 @@ impl EncKey {
 fn hmac_mac(sha: Sha, key: &[u8], data: &[u8]) -> Vec<u8> {
     use hmac::Mac;
     match sha {
-        Sha::S512 => hmac::Hmac::<sha2::Sha512>::new_from_slice(key).unwrap().chain_update(data).finalize().into_bytes().to_vec(),
-        _ => hmac::Hmac::<sha2::Sha256>::new_from_slice(key).unwrap().chain_update(data).finalize().into_bytes().to_vec(),
+        Sha::S512 => hmac::Hmac::<sha2::Sha512>::new_from_slice(key)
+            .unwrap()
+            .chain_update(data)
+            .finalize()
+            .into_bytes()
+            .to_vec(),
+        _ => hmac::Hmac::<sha2::Sha256>::new_from_slice(key)
+            .unwrap()
+            .chain_update(data)
+            .finalize()
+            .into_bytes()
+            .to_vec(),
     }
 }
 
@@ -112,11 +151,14 @@ pub enum Key {
 impl Key {
     // ponytail: unencrypted PEM only; password-protected keys (keygen -p) come later.
     pub fn load(path: &str) -> Result<Key> {
-        let pem = std::fs::read_to_string(path).with_context(|| format!("cannot read key {path}"))?;
+        let pem =
+            std::fs::read_to_string(path).with_context(|| format!("cannot read key {path}"))?;
         if let Ok(k) = ed25519_dalek::SigningKey::from_pkcs8_pem(&pem) {
             return Ok(Key::Ed25519(k));
         }
-        if let Ok(k) = p256::SecretKey::from_pkcs8_pem(&pem).or_else(|_| p256::SecretKey::from_sec1_pem(&pem)) {
+        if let Ok(k) =
+            p256::SecretKey::from_pkcs8_pem(&pem).or_else(|_| p256::SecretKey::from_sec1_pem(&pem))
+        {
             return Ok(Key::P256(k.into()));
         }
         if let Ok(k) = ed25519_dalek::VerifyingKey::from_public_key_pem(&pem) {
@@ -187,7 +229,9 @@ impl Key {
         match (self, pure) {
             (Key::Ed25519(_), true) => &[Sha::S512],
             (_, true) => &[],
-            (Key::Ed25519(_) | Key::Ed25519Pub(_) | Key::P256Pub(_), false) => &[Sha::S256, Sha::S512],
+            (Key::Ed25519(_) | Key::Ed25519Pub(_) | Key::P256Pub(_), false) => {
+                &[Sha::S256, Sha::S512]
+            }
             (Key::P256(_), false) => &[Sha::S256],
         }
     }
@@ -195,7 +239,10 @@ impl Key {
     /// Ed25519 signs the digest (or the whole payload when pure); ECDSA signs the payload.
     pub fn sign(&self, payload: &[u8], digest: &[u8], pure: bool) -> Result<Vec<u8>> {
         Ok(match self {
-            Key::Ed25519(k) => k.sign(if pure { payload } else { digest }).to_bytes().to_vec(),
+            Key::Ed25519(k) => k
+                .sign(if pure { payload } else { digest })
+                .to_bytes()
+                .to_vec(),
             Key::P256(k) => {
                 let sig: p256::ecdsa::Signature = k.sign(payload);
                 sig.to_der().as_bytes().to_vec()
@@ -212,7 +259,8 @@ impl Key {
         let ec = |vk: &p256::ecdsa::VerifyingKey| {
             // strip the optional --pad-sig zero padding, as image.py does
             let len = sig.get(1).map_or(0, |&l| l as usize + 2).min(sig.len());
-            p256::ecdsa::Signature::from_der(&sig[..len]).is_ok_and(|s| vk.verify(payload, &s).is_ok())
+            p256::ecdsa::Signature::from_der(&sig[..len])
+                .is_ok_and(|s| vk.verify(payload, &s).is_ok())
         };
         match self {
             Key::Ed25519(k) => ed(&k.verifying_key()),

@@ -52,7 +52,9 @@ impl Sha {
     }
 
     fn from_tlv(t: u8) -> Option<Sha> {
-        [Sha::S256, Sha::S384, Sha::S512].into_iter().find(|s| s.tlv() == t)
+        [Sha::S256, Sha::S384, Sha::S512]
+            .into_iter()
+            .find(|s| s.tlv() == t)
     }
 
     pub fn digest(self, data: &[u8]) -> Vec<u8> {
@@ -66,14 +68,22 @@ impl Sha {
 
 /// key_and_user_sha_to_alg_and_tlv(): `user` None means "auto".
 fn select_sha(key: Option<&Key>, user: Option<Sha>, pure: bool) -> Result<Sha> {
-    let Some(key) = key else { return Ok(user.unwrap_or(Sha::S256)) };
+    let Some(key) = key else {
+        return Ok(user.unwrap_or(Sha::S256));
+    };
     let allowed = key.allowed_sha(pure);
     match user {
-        _ if allowed.is_empty() => bail!("Could not find allowed hash algorithms for {} key", key.shortname()),
+        _ if allowed.is_empty() => bail!(
+            "Could not find allowed hash algorithms for {} key",
+            key.shortname()
+        ),
         None => Ok(allowed[0]),
         _ if pure => Ok(allowed[0]),
         Some(s) if allowed.contains(&s) => Ok(s),
-        Some(s) => bail!("Key {} can not be used with --sha {s:?}; allowed sha are one of {allowed:?}", key.shortname()),
+        Some(s) => bail!(
+            "Key {} can not be used with --sha {s:?}; allowed sha are one of {allowed:?}",
+            key.shortname()
+        ),
     }
 }
 
@@ -90,9 +100,18 @@ impl std::str::FromStr for Version {
 
     /// maj.min.rev+build with later parts optional, no leading zeros (version.py).
     fn from_str(s: &str) -> Result<Version> {
-        let bad = || anyhow::anyhow!("Invalid version number, should be maj.min.rev+build with later parts optional");
+        let bad = || {
+            anyhow::anyhow!(
+                "Invalid version number, should be maj.min.rev+build with later parts optional"
+            )
+        };
         let num = |p: &str| -> Result<u64> {
-            ensure!(!p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) && (p == "0" || !p.starts_with('0')), bad());
+            ensure!(
+                !p.is_empty()
+                    && p.bytes().all(|b| b.is_ascii_digit())
+                    && (p == "0" || !p.starts_with('0')),
+                bad()
+            );
             p.parse().map_err(|_| bad())
         };
         let (main, build) = match s.split_once('+') {
@@ -101,7 +120,10 @@ impl std::str::FromStr for Version {
         };
         let parts: Vec<&str> = main.split('.').collect();
         // build is only valid after a full maj.min.rev
-        ensure!(parts.len() <= 3 && (build.is_none() || parts.len() == 3), bad());
+        ensure!(
+            parts.len() <= 3 && (build.is_none() || parts.len() == 3),
+            bad()
+        );
         let p = |i: usize| parts.get(i).map_or(Ok(0), |v| num(v));
         Ok(Version {
             major: p(0)?.try_into().map_err(|_| bad())?,
@@ -114,7 +136,11 @@ impl std::str::FromStr for Version {
 
 impl fmt::Display for Version {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}.{}.{}+{}", self.major, self.minor, self.revision, self.build)
+        write!(
+            f,
+            "{}.{}.{}+{}",
+            self.major, self.minor, self.revision, self.build
+        )
     }
 }
 
@@ -126,10 +152,18 @@ pub enum Endian {
 
 impl Endian {
     fn u16(self, v: u16) -> [u8; 2] {
-        if self == Endian::Big { v.to_be_bytes() } else { v.to_le_bytes() }
+        if self == Endian::Big {
+            v.to_be_bytes()
+        } else {
+            v.to_le_bytes()
+        }
     }
     fn u32(self, v: u32) -> [u8; 4] {
-        if self == Endian::Big { v.to_be_bytes() } else { v.to_le_bytes() }
+        if self == Endian::Big {
+            v.to_be_bytes()
+        } else {
+            v.to_le_bytes()
+        }
     }
 }
 
@@ -141,7 +175,11 @@ struct Tlv {
 
 impl Tlv {
     fn new(endian: Endian, magic: u16) -> Tlv {
-        Tlv { endian, magic, buf: Vec::new() }
+        Tlv {
+            endian,
+            magic,
+            buf: Vec::new(),
+        }
     }
 
     fn add(&mut self, kind: u8, payload: &[u8]) {
@@ -195,10 +233,15 @@ pub struct Opts {
 impl Opts {
     fn boot_magic(&self) -> Vec<u8> {
         if self.max_align == DEFAULT_MAX_ALIGN {
-            return vec![0x77, 0xc2, 0x95, 0xf3, 0x60, 0xd2, 0xef, 0x7f, 0x35, 0x52, 0x50, 0x0f, 0x2c, 0xb6, 0x79, 0x80];
+            return vec![
+                0x77, 0xc2, 0x95, 0xf3, 0x60, 0xd2, 0xef, 0x7f, 0x35, 0x52, 0x50, 0x0f, 0x2c, 0xb6,
+                0x79, 0x80,
+            ];
         }
         let mut m = self.endian.u16(self.max_align as u16).to_vec();
-        m.extend([0x2d, 0xe1, 0x5d, 0x29, 0x41, 0x0b, 0x8d, 0x77, 0x67, 0x9c, 0x11, 0x0f, 0x1f, 0x8a]);
+        m.extend([
+            0x2d, 0xe1, 0x5d, 0x29, 0x41, 0x0b, 0x8d, 0x77, 0x67, 0x9c, 0x11, 0x0f, 0x1f, 0x8a,
+        ]);
         m
     }
 
@@ -210,8 +253,13 @@ impl Opts {
         if self.overwrite_only {
             return Ok(self.max_align * 2 + self.magic_align_size());
         }
-        ensure!([1, 2, 4, 8, 16, 32].contains(&self.align), "Invalid alignment: {}", self.align);
-        let mut t = self.max_sectors * 3 * self.align + self.max_align * 4 + self.magic_align_size();
+        ensure!(
+            [1, 2, 4, 8, 16, 32].contains(&self.align),
+            "Invalid alignment: {}",
+            self.align
+        );
+        let mut t =
+            self.max_sectors * 3 * self.align + self.max_align * 4 + self.magic_align_size();
         if let Some(len) = self.enc_tlv_len {
             // two key slots; image.py sizes plain slots for 16 bytes even with AES-256
             let slot = if self.save_enctlv { len } else { 16 };
@@ -241,7 +289,10 @@ impl Opts {
 /// Image.load() + Image.create(): returns header + body + protected TLVs + TLVs.
 pub fn create(input: &[u8], o: &Opts, key: Option<&Key>, enc: Option<&EncKey>) -> Result<Vec<u8>> {
     if let Some(k) = key {
-        ensure!(k.is_private(), "Cannot sign with a public-only PEM; signing requires the private key.");
+        ensure!(
+            k.is_private(),
+            "Cannot sign with a public-only PEM; signing requires the private key."
+        );
     }
     if let (Some(Key::P256(_)), Some(EncKey::X25519(_))) = (key, enc) {
         bail!("Signing and encryption must use the same type of key");
@@ -250,15 +301,24 @@ pub fn create(input: &[u8], o: &Opts, key: Option<&Key>, enc: Option<&EncKey>) -
         e.check_hmac(o.hmac_sha)?;
     }
     ensure!(!(o.pure && o.sha.is_some()), "Pure signatures, currently, enforces preferred hash algorithm, and forbids sha selection by user.");
-    ensure!(o.header_size >= IMAGE_HEADER_SIZE, "Minimum value for -H/--header-size is {IMAGE_HEADER_SIZE}");
-    ensure!(o.load_addr == 0 || o.rom_fixed == 0, "Can not set rom_fixed and load_addr at the same time");
+    ensure!(
+        o.header_size >= IMAGE_HEADER_SIZE,
+        "Minimum value for -H/--header-size is {IMAGE_HEADER_SIZE}"
+    );
+    ensure!(
+        o.load_addr == 0 || o.rom_fixed == 0,
+        "Can not set rom_fixed and load_addr at the same time"
+    );
 
     let mut payload = Vec::with_capacity(input.len() + o.header_size + 1024);
     if o.pad_header {
         payload.resize(o.header_size, o.erased_val);
     }
     payload.extend_from_slice(input);
-    ensure!(payload.len() >= o.header_size, "Input is smaller than the header size");
+    ensure!(
+        payload.len() >= o.header_size,
+        "Input is smaller than the header size"
+    );
     ensure!(
         o.pad_header || payload[..o.header_size].iter().all(|&b| b == 0),
         "Header padding was not requested and image does not start with zeros"
@@ -289,13 +349,21 @@ pub fn create(input: &[u8], o: &Opts, key: Option<&Key>, enc: Option<&EncKey>) -
         flags |= F_NON_BOOTABLE;
     }
     if enc.is_some() {
-        flags |= if o.aes256 { F_ENCRYPTED_AES256 } else { F_ENCRYPTED_AES128 };
+        flags |= if o.aes256 {
+            F_ENCRYPTED_AES256
+        } else {
+            F_ENCRYPTED_AES128
+        };
     }
     let img_size = u32::try_from(payload.len() - o.header_size).context("image too large")?;
     let v = o.version;
     let mut hdr = Vec::with_capacity(IMAGE_HEADER_SIZE);
     hdr.extend(e.u32(IMAGE_MAGIC));
-    hdr.extend(e.u32(if o.rom_fixed != 0 { o.rom_fixed } else { o.load_addr }));
+    hdr.extend(e.u32(if o.rom_fixed != 0 {
+        o.rom_fixed
+    } else {
+        o.load_addr
+    }));
     hdr.extend(e.u16(o.header_size as u16));
     hdr.extend(e.u16(prot.len() as u16));
     hdr.extend(e.u32(img_size));
@@ -354,7 +422,10 @@ pub fn create(input: &[u8], o: &Opts, key: Option<&Key>, enc: Option<&EncKey>) -
 
 /// Image.pad_to(): fill to slot_size with erased_val and write the trailer.
 pub fn pad_to_slot(payload: &mut Vec<u8>, o: &Opts) -> Result<()> {
-    ensure!(payload.len() + o.trailer_size()? <= o.slot_size, "image does not fit in slot");
+    ensure!(
+        payload.len() + o.trailer_size()? <= o.slot_size,
+        "image does not fit in slot"
+    );
     payload.resize(o.slot_size, o.erased_val);
     let magic = o.boot_magic();
     let end = payload.len();
@@ -411,7 +482,10 @@ pub struct Verified {
 pub fn verify(b: &[u8], key: Option<&Key>) -> Result<Verified, VerifyError> {
     use VerifyError::*;
     let u16_at = |o: usize| b.get(o..o + 2).map(|s| u16::from_le_bytes([s[0], s[1]]));
-    let u32_at = |o: usize| b.get(o..o + 4).map(|s| u32::from_le_bytes(s.try_into().unwrap()));
+    let u32_at = |o: usize| {
+        b.get(o..o + 4)
+            .map(|s| u32::from_le_bytes(s.try_into().unwrap()))
+    };
 
     if u32_at(0) != Some(IMAGE_MAGIC) || b.len() < IMAGE_HEADER_SIZE {
         return Err(InvalidMagic);
@@ -457,7 +531,11 @@ pub fn verify(b: &[u8], key: Option<&Key>) -> Result<Verified, VerifyError> {
                 return Err(InvalidHash);
             }
             if key.is_none() {
-                return Ok(Verified { version, digest: Some(d), signature: None });
+                return Ok(Verified {
+                    version,
+                    digest: Some(d),
+                    signature: None,
+                });
             }
             digest = Some(d);
         } else if let Some(k) = key.filter(|k| k.sig_tlv() == t) {
@@ -465,11 +543,24 @@ pub fn verify(b: &[u8], key: Option<&Key>) -> Result<Verified, VerifyError> {
             if pure && t != tlv::ED25519 {
                 continue;
             }
-            if k.verify(val, hash_region, digest.as_deref().unwrap_or_default(), pure) {
+            if k.verify(
+                val,
+                hash_region,
+                digest.as_deref().unwrap_or_default(),
+                pure,
+            ) {
                 return Ok(if pure {
-                    Verified { version, digest: None, signature: Some(val.to_vec()) }
+                    Verified {
+                        version,
+                        digest: None,
+                        signature: Some(val.to_vec()),
+                    }
                 } else {
-                    Verified { version, digest, signature: None }
+                    Verified {
+                        version,
+                        digest,
+                        signature: None,
+                    }
                 });
             }
         }
@@ -481,7 +572,12 @@ pub fn verify(b: &[u8], key: Option<&Key>) -> Result<Verified, VerifyError> {
 pub fn hex_to_bin(text: &str) -> Result<(Vec<u8>, u32)> {
     let mut mem = BTreeMap::new();
     let mut upper = 0u32;
-    for (n, line) in text.lines().map(str::trim).enumerate().filter(|(_, l)| !l.is_empty()) {
+    for (n, line) in text
+        .lines()
+        .map(str::trim)
+        .enumerate()
+        .filter(|(_, l)| !l.is_empty())
+    {
         let bad = || anyhow::anyhow!("invalid hex record on line {}", n + 1);
         let hex = line.strip_prefix(':').ok_or_else(bad)?;
         ensure!(hex.len() % 2 == 0 && hex.len() >= 10, bad());
@@ -491,7 +587,11 @@ pub fn hex_to_bin(text: &str) -> Result<(Vec<u8>, u32)> {
             .collect::<Result<Vec<u8>, _>>()
             .map_err(|_| bad())?;
         ensure!(rec.len() == rec[0] as usize + 5, bad());
-        ensure!(rec.iter().fold(0u8, |a, &x| a.wrapping_add(x)) == 0, "checksum error on line {}", n + 1);
+        ensure!(
+            rec.iter().fold(0u8, |a, &x| a.wrapping_add(x)) == 0,
+            "checksum error on line {}",
+            n + 1
+        );
         let addr = u16::from_be_bytes([rec[1], rec[2]]) as u32;
         let data = &rec[4..rec.len() - 1];
         match rec[3] {
@@ -548,7 +648,11 @@ pub fn bin_to_hex(segments: &[(u32, Vec<u8>)]) -> String {
             rec(4, 0, &((start >> 16) as u16).to_be_bytes());
         }
         let mut j = i;
-        while j < mem.len() && j - i < 16 && mem[j].0 == start + (j - i) as u32 && mem[j].0 >> 16 == start >> 16 {
+        while j < mem.len()
+            && j - i < 16
+            && mem[j].0 == start + (j - i) as u32
+            && mem[j].0 >> 16 == start >> 16
+        {
             j += 1;
         }
         let data: Vec<u8> = mem[i..j].iter().map(|&(_, d)| d).collect();

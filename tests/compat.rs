@@ -52,14 +52,20 @@ fn firmware(len: usize) -> Vec<u8> {
 
 /// Signs with both tools and asserts byte-identical output.
 fn same_output(name: &str, infile: &str, ext: &str, args: &[&str]) {
-    let (r, p) = (tmp(&format!("{name}.rs.{ext}")), tmp(&format!("{name}.py.{ext}")));
+    let (r, p) = (
+        tmp(&format!("{name}.rs.{ext}")),
+        tmp(&format!("{name}.py.{ext}")),
+    );
     for (rust, out) in [(true, &r), (false, &p)] {
         let mut a = vec!["sign"];
         a.extend(args);
         a.extend([infile, out.as_str()]);
         ok(rust, &a);
     }
-    assert!(std::fs::read(&r).unwrap() == std::fs::read(&p).unwrap(), "{name}: output differs ({r} vs {p})");
+    assert!(
+        std::fs::read(&r).unwrap() == std::fs::read(&p).unwrap(),
+        "{name}: output differs ({r} vs {p})"
+    );
 }
 
 #[test]
@@ -80,18 +86,77 @@ fn matches_python_imgtool() {
     let script = format!(
         "from intelhex import IntelHex; ih = IntelHex(); ih.frombytes(open({bin:?}, 'rb').read(), offset=0x08020000); ih.tofile({hex_in:?}, 'hex')"
     );
-    assert!(Command::new("python3").args(["-c", &script]).status().unwrap().success());
+    assert!(Command::new("python3")
+        .args(["-c", &script])
+        .status()
+        .unwrap()
+        .success());
 
     let common = ["-H", "0x200", "--pad-header", "-S", "0x40000"];
     let cases: &[(&str, &[&str])] = &[
         ("plain", &["-v", "1.2.3+4"]),
-        ("confirm", &["-v", "1.2.3+4", "--align", "4", "--pad", "--confirm", "-s", "auto"]),
+        (
+            "confirm",
+            &[
+                "-v",
+                "1.2.3+4",
+                "--align",
+                "4",
+                "--pad",
+                "--confirm",
+                "-s",
+                "auto",
+            ],
+        ),
         ("test", &["-v", "1.0", "--test", "-s", "0x42", "-M", "64"]),
-        ("ow", &["-v", "3", "--overwrite-only", "--pad", "-R", "0", "--align", "16", "--max-align", "16", "-L", "0x20000000"]),
-        ("rom", &["-v", "1.0.0", "-F", "0x08010000", "--non-bootable", "--public-key-format", "full"]),
+        (
+            "ow",
+            &[
+                "-v",
+                "3",
+                "--overwrite-only",
+                "--pad",
+                "-R",
+                "0",
+                "--align",
+                "16",
+                "--max-align",
+                "16",
+                "-L",
+                "0x20000000",
+            ],
+        ),
+        (
+            "rom",
+            &[
+                "-v",
+                "1.0.0",
+                "-F",
+                "0x08010000",
+                "--non-bootable",
+                "--public-key-format",
+                "full",
+            ],
+        ),
         ("sha512", &["-v", "2.0", "--sha", "512"]),
         ("pure", &["-v", "2.0", "--pure"]),
-        ("big", &["-v", "1.0.0", "-e", "big", "-s", "7", "--pad", "--confirm", "--max-align", "32", "--align", "32"]),
+        (
+            "big",
+            &[
+                "-v",
+                "1.0.0",
+                "-e",
+                "big",
+                "-s",
+                "7",
+                "--pad",
+                "--confirm",
+                "--max-align",
+                "32",
+                "--align",
+                "32",
+            ],
+        ),
     ];
     for (name, args) in cases {
         for (kname, key) in [("nokey", None), ("ed", Some(ed.as_str()))] {
@@ -102,11 +167,33 @@ fn matches_python_imgtool() {
             }
             same_output(&format!("{name}-{kname}"), &bin, "bin", &a);
             if !name.starts_with("big") {
-                same_output(&format!("{name}-{kname}-hexout"), &bin, "hex", &[&a[..], &["-x", "0x10000"]].concat());
+                same_output(
+                    &format!("{name}-{kname}-hexout"),
+                    &bin,
+                    "hex",
+                    &[&a[..], &["-x", "0x10000"]].concat(),
+                );
             }
         }
     }
-    same_output("hex2hex", &hex_in, "hex", &["-v", "1.0", "-H", "0x20", "--pad-header", "-S", "0x40000", "-k", &ed, "--pad", "--confirm"]);
+    same_output(
+        "hex2hex",
+        &hex_in,
+        "hex",
+        &[
+            "-v",
+            "1.0",
+            "-H",
+            "0x20",
+            "--pad-header",
+            "-S",
+            "0x40000",
+            "-k",
+            &ed,
+            "--pad",
+            "--confirm",
+        ],
+    );
 
     // ECDSA signatures are randomized in Python, so cross-verify instead of comparing bytes.
     let sec1 = py().unwrap().parent().unwrap().join("../root-ec-p256.pem");
@@ -114,7 +201,15 @@ fn matches_python_imgtool() {
     for key in [ec.as_str(), sec1] {
         for (signer, verifier) in [(true, false), (false, true)] {
             let out = tmp("ec.bin");
-            ok(signer, &[&["sign"][..], &common, &["-v", "1.0", "-s", "auto", "-k", key, &bin, &out]].concat());
+            ok(
+                signer,
+                &[
+                    &["sign"][..],
+                    &common,
+                    &["-v", "1.0", "-s", "auto", "-k", key, &bin, &out],
+                ]
+                .concat(),
+            );
             let v = ok(verifier, &["verify", "-k", key, &out]);
             assert!(String::from_utf8_lossy(&v.stdout).contains("Image version: 1.0.0+0"));
         }
@@ -122,15 +217,32 @@ fn matches_python_imgtool() {
 
     // verify output and failure modes match
     let img = tmp("verify.bin");
-    ok(false, &[&["sign"][..], &common, &["-v", "1.2.3+4", "-k", &ed, &bin, &img]].concat());
+    ok(
+        false,
+        &[
+            &["sign"][..],
+            &common,
+            &["-v", "1.2.3+4", "-k", &ed, &bin, &img],
+        ]
+        .concat(),
+    );
     let mut tampered = std::fs::read(&img).unwrap();
     tampered[0x300] ^= 1;
     let bad = tmp("tampered.bin");
     std::fs::write(&bad, tampered).unwrap();
-    for args in [vec!["verify", "-k", &ed, &img], vec!["verify", &img], vec!["verify", "-k", &ec, &img], vec!["verify", "-k", &ed, &bad]] {
+    for args in [
+        vec!["verify", "-k", &ed, &img],
+        vec!["verify", &img],
+        vec!["verify", "-k", &ec, &img],
+        vec!["verify", "-k", &ed, &bad],
+    ] {
         let (r, p) = (run(true, &args), run(false, &args));
         assert_eq!(r.status.success(), p.status.success(), "{args:?}");
-        assert_eq!(String::from_utf8_lossy(&r.stdout), String::from_utf8_lossy(&p.stdout), "{args:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&r.stdout),
+            String::from_utf8_lossy(&p.stdout),
+            "{args:?}"
+        );
     }
 
     // getpub, including a key generated by the Rust keygen (proves Python can read it)
@@ -139,7 +251,13 @@ fn matches_python_imgtool() {
     ok(true, &["keygen", "-t", "ed25519", "-k", &rs_ed]);
     ok(true, &["keygen", "-t", "ecdsa-p256", "-k", &rs_ec]);
     for key in [ed.as_str(), ec.as_str(), sec1, &rs_ed, &rs_ec] {
-        for enc in [&["-e", "lang-c"][..], &["-e", "pem"], &["-e", "raw"], &["-e", "lang-c", "--name-suffix", "_2"], &[]] {
+        for enc in [
+            &["-e", "lang-c"][..],
+            &["-e", "pem"],
+            &["-e", "raw"],
+            &["-e", "lang-c", "--name-suffix", "_2"],
+            &[],
+        ] {
             let args = [&["getpub", "-k", key][..], enc].concat();
             assert_eq!(ok(true, &args).stdout, ok(false, &args).stdout, "{args:?}");
         }
@@ -211,7 +329,12 @@ fn encryption_matches_python() {
     };
     let root = py_path.parent().unwrap().join("..");
     let k = |n: &str| root.join(n).to_str().unwrap().to_owned();
-    let (x_pub, x_priv, ec_pub, ec_priv) = (k("enc-x25519-pub.pem"), k("enc-x25519-priv.pem"), k("enc-ec256-pub.pem"), k("enc-ec256-priv.pem"));
+    let (x_pub, x_priv, ec_pub, ec_priv) = (
+        k("enc-x25519-pub.pem"),
+        k("enc-x25519-priv.pem"),
+        k("enc-ec256-pub.pem"),
+        k("enc-ec256-priv.pem"),
+    );
     let (ed, ec) = (k("root-ed25519.pem"), k("root-ec-p256.pem"));
     let bin = tmp("enc-fw.bin");
     std::fs::write(&bin, firmware(10_001)).unwrap();
@@ -220,16 +343,49 @@ fn encryption_matches_python() {
     type Case<'a> = (&'a str, Option<&'a str>, &'a str, &'a str, &'a [&'a str]);
     let cases: &[Case] = &[
         ("x25519", Some(&ed), &x_pub, &x_priv, &[]),
-        ("x25519-aes256", Some(&ed), &x_pub, &x_priv, &["--encrypt-keylen", "256"]),
-        ("x25519-hmac512", Some(&ed), &x_pub, &x_priv, &["--hmac-sha", "512", "--encrypt-keylen", "256"]),
+        (
+            "x25519-aes256",
+            Some(&ed),
+            &x_pub,
+            &x_priv,
+            &["--encrypt-keylen", "256"],
+        ),
+        (
+            "x25519-hmac512",
+            Some(&ed),
+            &x_pub,
+            &x_priv,
+            &["--hmac-sha", "512", "--encrypt-keylen", "256"],
+        ),
         ("x25519-privkey", Some(&ed), &x_priv, &x_priv, &[]),
         ("x25519-nokey", None, &x_pub, &x_priv, &[]),
         ("ec256-ed", Some(&ed), &ec_pub, &ec_priv, &[]),
-        ("ec256-ec", Some(&ec), &ec_pub, &ec_priv, &["--encrypt-keylen", "256"]),
+        (
+            "ec256-ec",
+            Some(&ec),
+            &ec_pub,
+            &ec_priv,
+            &["--encrypt-keylen", "256"],
+        ),
     ];
     for &(name, key, enc, priv_key, extra) in cases {
-        for trailer in [&["--pad", "--confirm"][..], &["--pad", "--save-enctlv", "--align", "8"], &[]] {
-            let mut args = vec!["sign", "-H", "0x200", "--pad-header", "-S", "0x20000", "-v", "1.0", "-E", enc];
+        for trailer in [
+            &["--pad", "--confirm"][..],
+            &["--pad", "--save-enctlv", "--align", "8"],
+            &[],
+        ] {
+            let mut args = vec![
+                "sign",
+                "-H",
+                "0x200",
+                "--pad-header",
+                "-S",
+                "0x20000",
+                "-v",
+                "1.0",
+                "-E",
+                enc,
+            ];
             args.extend(extra);
             args.extend(trailer);
             if let Some(k) = key {
@@ -237,16 +393,25 @@ fn encryption_matches_python() {
             }
             // ECDSA signatures are randomized, so only Ed25519/unsigned images compare structurally
             if key != Some(ec.as_str()) {
-                let (r, p) = (tmp(&format!("{name}-clear.rs.bin")), tmp(&format!("{name}-clear.py.bin")));
+                let (r, p) = (
+                    tmp(&format!("{name}-clear.rs.bin")),
+                    tmp(&format!("{name}-clear.py.bin")),
+                );
                 ok(true, &[&args[..], &["--clear", &bin, &r]].concat());
                 ok(false, &[&args[..], &["--clear", &bin, &p]].concat());
                 let (r, p) = (std::fs::read(&r).unwrap(), std::fs::read(&p).unwrap());
-                assert!(mask_enc(r) == mask_enc(p), "{name} {trailer:?}: --clear image differs");
+                assert!(
+                    mask_enc(r) == mask_enc(p),
+                    "{name} {trailer:?}: --clear image differs"
+                );
             }
             for rust in [true, false] {
                 let out = tmp(&format!("{name}-{rust}.bin"));
                 ok(rust, &[&args[..], &[&bin, &out]].concat());
-                let d = Command::new("python3").args(["-c", DECRYPT_PY, &out, priv_key]).output().unwrap();
+                let d = Command::new("python3")
+                    .args(["-c", DECRYPT_PY, &out, priv_key])
+                    .output()
+                    .unwrap();
                 assert_eq!(
                     String::from_utf8_lossy(&d.stdout).trim(),
                     "ok",
@@ -259,8 +424,28 @@ fn encryption_matches_python() {
 
     // invalid combinations are rejected by both
     let out = tmp("bad.bin");
-    for bad in [vec!["-k", &ec, "-E", &x_pub], vec!["-k", &ed, "-E", &ec_pub, "--hmac-sha", "512"]] {
-        let args = [&["sign", "-H", "0x200", "--pad-header", "-S", "0x20000", "-v", "1.0"][..], &bad, &[&bin, &out]].concat();
-        assert!(!run(true, &args).status.success() && !run(false, &args).status.success(), "{bad:?}");
+    for bad in [
+        vec!["-k", &ec, "-E", &x_pub],
+        vec!["-k", &ed, "-E", &ec_pub, "--hmac-sha", "512"],
+    ] {
+        let args = [
+            &[
+                "sign",
+                "-H",
+                "0x200",
+                "--pad-header",
+                "-S",
+                "0x20000",
+                "-v",
+                "1.0",
+            ][..],
+            &bad,
+            &[&bin, &out],
+        ]
+        .concat();
+        assert!(
+            !run(true, &args).status.success() && !run(false, &args).status.success(),
+            "{bad:?}"
+        );
     }
 }
