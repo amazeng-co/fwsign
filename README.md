@@ -19,10 +19,10 @@ imgtool getpub -k root.pem     # C array for the bootloader
 | Commands | `sign` (`create`), `verify`, `keygen`, `getpub` (`lang-c`, `pem`, `raw`), `version` |
 | Keys | Ed25519, ECDSA P-256 (PKCS#8 or SEC1 PEM, public or private) |
 | Sign options | `-k -v -H -S --align --max-align --pad --pad-header --confirm --test -s/--security-counter -M --overwrite-only -e/--endian -R -x -L -F --non-bootable --public-key-format --sha --pure` |
+| Encryption | `-E` with ECIES-P256 or ECIES-X25519 (HMAC-SHA256/512), `--encrypt-keylen 128/256`, `--clear`, `--save-enctlv` |
 | In/out | `.bin` and Intel `.hex`, both directions |
 
-Not yet supported: RSA, ECDSA P-384, encryption (`-E`, `--clear`, `--encrypt-keylen`, `--hmac-sha`, `--save-enctlv`),
-`--compression`, `--vid/--cid`, `--boot-record`, `-d/--dependencies`, `--custom-tlv*`, `--fix-sig*`,
+Not yet supported: RSA (signing and RSA-OAEP encryption), ECDSA P-384, `--compression`, `--vid/--cid`, `--boot-record`, `-d/--dependencies`, `--custom-tlv*`, `--fix-sig*`,
 `--vector-to-sign`, `--sig-out`, `--pad-sig`, password-protected keys, `getpubhash`, `getpriv`, `keyinfo`, `dumpinfo`
 and `getpub -e lang-rust`. The CLI rejects these arguments rather than ignoring them.
 
@@ -32,6 +32,7 @@ and `getpub -e lang-rust`. The CLI rejects these arguments rather than ignoring 
 
 - **Byte-identical output:** about 30 sign configurations (bin and hex, with and without an Ed25519 key, pure, sha512, big-endian, overwrite-only, RAM-load, ROM-fixed, ...), plus `getpub` output.
 - **Cross-verification:** ECDSA signatures are randomized in Python, so each tool verifies images signed by the other instead.
+- **Encryption:** encrypted images use a fresh random key and ephemeral ECDH key on every run. `--clear` images are compared with the wrapped-key TLV masked out. Real encrypted images from both tools are decrypted by an independent Python `cryptography` ECIES implementation and checked against the image hash.
 - **Failure modes:** `verify` output for tampered images and wrong keys matches the Python tool.
 
 ```sh
