@@ -7,7 +7,7 @@ use std::io::Write;
 use std::path::Path;
 
 use image::{Endian, Opts, Sha, Version};
-use keys::Key;
+use keys::{EncKey, Key};
 
 /// MCUboot image tool (Rust port of scripts/imgtool.py)
 #[derive(Parser)]
@@ -102,6 +102,18 @@ struct SignArgs {
     sha: String,
     #[arg(long = "pure")]
     pure: bool,
+    /// Encrypt image using the provided public key
+    #[arg(short = 'E', long)]
+    encrypt: Option<String>,
+    #[arg(long, default_value = "128", value_parser = ["128", "256"])]
+    encrypt_keylen: String,
+    /// Output a non-encrypted image with encryption capabilities
+    #[arg(short = 'c', long)]
+    clear: bool,
+    #[arg(long, default_value = "auto", value_parser = ["auto", "256", "512"])]
+    hmac_sha: String,
+    #[arg(long)]
+    save_enctlv: bool,
     infile: String,
     outfile: String,
 }
@@ -138,6 +150,9 @@ fn read_image(path: &str) -> Result<(Vec<u8>, Option<u32>)> {
 
 fn sign(a: SignArgs) -> Result<()> {
     let align: usize = a.align.parse()?;
+    let enc = a.encrypt.as_deref().map(EncKey::load).transpose()?;
+    let aes256 = a.encrypt_keylen == "256";
+    let hmac_sha = if a.hmac_sha == "512" { Sha::S512 } else { Sha::S256 };
     let security_counter = match a.security_counter.as_deref() {
         None => None,
         Some(s) if s.eq_ignore_ascii_case("auto") => {
@@ -173,6 +188,11 @@ fn sign(a: SignArgs) -> Result<()> {
             _ => None,
         },
         pure: a.pure,
+        aes256,
+        clear: a.clear,
+        hmac_sha,
+        save_enctlv: a.save_enctlv,
+        enc_tlv_len: enc.as_ref().map(|e| e.tlv_len(if aes256 { 32 } else { 16 }, hmac_sha)),
     };
 
     let (data, mut base) = read_image(&a.infile)?;
@@ -181,7 +201,7 @@ fn sign(a: SignArgs) -> Result<()> {
         base = base.map(|b| if b != 0 { b.wrapping_sub(o.header_size as u32) } else { b });
     }
     let key = a.key.as_deref().map(Key::load).transpose()?;
-    let mut img = image::create(&data, &o, key.as_ref())?;
+    let mut img = image::create(&data, &o, key.as_ref(), enc.as_ref())?;
 
     if is_hex(&a.outfile) {
         let base = match a.hex_addr {

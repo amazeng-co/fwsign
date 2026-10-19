@@ -1,11 +1,105 @@
 //! Key loading / signing, mirroring scripts/imgtool/keys/*.py.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use ed25519_dalek::{Signer, Verifier};
 use p256::pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey, LineEnding};
 use rand_core::OsRng;
 
 use crate::image::{tlv, Sha};
+
+/// Public key the AES image key is wrapped for (ECIES, image.py ecies_hkdf()).
+pub enum EncKey {
+    P256(p256::PublicKey),
+    X25519(x25519_dalek::PublicKey),
+}
+
+// No pkcs8 support in x25519-dalek; X25519 SPKI / PKCS#8 DER have fixed prefixes.
+const X25519_SPKI_PREFIX: &[u8] = &[0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x03, 0x21, 0x00];
+const X25519_PKCS8_PREFIX: &[u8] = &[0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x04, 0x22, 0x04, 0x20];
+
+impl EncKey {
+    /// Accepts the public key or the keypair, like imgtool's load_key().
+    pub fn load(path: &str) -> Result<EncKey> {
+        let pem = std::fs::read_to_string(path).with_context(|| format!("cannot read key {path}"))?;
+        if let Ok(k) = p256::PublicKey::from_public_key_pem(&pem) {
+            return Ok(EncKey::P256(k));
+        }
+        if let Ok(k) = p256::SecretKey::from_pkcs8_pem(&pem).or_else(|_| p256::SecretKey::from_sec1_pem(&pem)) {
+            return Ok(EncKey::P256(k.public_key()));
+        }
+        if let Ok((_, der)) = p256::pkcs8::der::pem::decode_vec(pem.as_bytes()) {
+            let raw = |prefix: &[u8]| -> Option<[u8; 32]> { der.strip_prefix(prefix)?.try_into().ok() };
+            if let Some(b) = raw(X25519_SPKI_PREFIX) {
+                return Ok(EncKey::X25519(b.into()));
+            }
+            if let Some(b) = raw(X25519_PKCS8_PREFIX) {
+                return Ok(EncKey::X25519((&x25519_dalek::StaticSecret::from(b)).into()));
+            }
+        }
+        bail!("{path}: unsupported encryption key (supported: ECDSA P-256, X25519 PEM)")
+    }
+
+    pub fn check_hmac(&self, hmac: Sha) -> Result<()> {
+        ensure!(hmac == Sha::S256 || matches!(self, EncKey::X25519(_)), "Currently only ECIES-X25519 supports HMAC-SHA512");
+        Ok(())
+    }
+
+    /// Length of the ENC TLV value: ephemeral pubkey + mac + wrapped key.
+    pub fn tlv_len(&self, keylen: usize, hmac: Sha) -> usize {
+        let pubk = if matches!(self, EncKey::P256(_)) { 65 } else { 32 };
+        pubk + hmac.digest(&[]).len() + keylen
+    }
+
+    /// ECIES: ECDH with an ephemeral key, HKDF("MCUBoot_ECIES_v1"), AES-CTR wrap, HMAC.
+    /// Returns (TLV type, ephemeral pubkey || mac || wrapped key).
+    pub fn wrap(&self, plainkey: &[u8], hmac: Sha) -> Result<(u8, Vec<u8>)> {
+        self.check_hmac(hmac)?;
+        let (shared, mut out, kind) = match self {
+            EncKey::P256(pk) => {
+                let e = p256::ecdh::EphemeralSecret::random(&mut OsRng);
+                let pubk = p256::EncodedPoint::from(e.public_key()).as_bytes().to_vec();
+                (e.diffie_hellman(pk).raw_secret_bytes().to_vec(), pubk, tlv::ENCEC256)
+            }
+            EncKey::X25519(pk) => {
+                let e = x25519_dalek::EphemeralSecret::random_from_rng(OsRng);
+                let pubk = x25519_dalek::PublicKey::from(&e).as_bytes().to_vec();
+                let kind = if hmac == Sha::S512 { tlv::ENCX25519_SHA512 } else { tlv::ENCX25519 };
+                (e.diffie_hellman(pk).as_bytes().to_vec(), pubk, kind)
+            }
+        };
+        let n = plainkey.len();
+        let mut derived = vec![0; n + hmac.digest(&[]).len()];
+        match hmac {
+            Sha::S512 => hkdf::Hkdf::<sha2::Sha512>::new(None, &shared).expand(b"MCUBoot_ECIES_v1", &mut derived),
+            _ => hkdf::Hkdf::<sha2::Sha256>::new(None, &shared).expand(b"MCUBoot_ECIES_v1", &mut derived),
+        }
+        .map_err(|_| anyhow::anyhow!("HKDF output too long"))?;
+        let mut cipherkey = plainkey.to_vec();
+        aes_ctr(&derived[..n], &mut cipherkey);
+        out.extend(hmac_mac(hmac, &derived[n..], &cipherkey));
+        out.extend(cipherkey);
+        Ok((kind, out))
+    }
+}
+
+fn hmac_mac(sha: Sha, key: &[u8], data: &[u8]) -> Vec<u8> {
+    use hmac::Mac;
+    match sha {
+        Sha::S512 => hmac::Hmac::<sha2::Sha512>::new_from_slice(key).unwrap().chain_update(data).finalize().into_bytes().to_vec(),
+        _ => hmac::Hmac::<sha2::Sha256>::new_from_slice(key).unwrap().chain_update(data).finalize().into_bytes().to_vec(),
+    }
+}
+
+/// AES-CTR with an all-zero nonce, as MCUboot uses for both key wrap and image body.
+pub fn aes_ctr(key: &[u8], data: &mut [u8]) {
+    use ctr::cipher::{KeyIvInit, StreamCipher};
+    let iv = [0u8; 16];
+    match key.len() {
+        16 => ctr::Ctr128BE::<aes::Aes128>::new(key.into(), &iv.into()).apply_keystream(data),
+        32 => ctr::Ctr128BE::<aes::Aes256>::new(key.into(), &iv.into()).apply_keystream(data),
+        n => unreachable!("AES key length {n}"),
+    }
+}
 
 #[allow(clippy::large_enum_variant)] // one key per run, boxing buys nothing
 pub enum Key {

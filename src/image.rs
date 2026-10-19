@@ -5,7 +5,7 @@ use sha2::Digest;
 use std::collections::BTreeMap;
 use std::fmt;
 
-use crate::keys::Key;
+use crate::keys::{aes_ctr, EncKey, Key};
 
 pub const IMAGE_MAGIC: u32 = 0x96f3_b83d;
 pub const IMAGE_HEADER_SIZE: usize = 32;
@@ -14,6 +14,8 @@ const TLV_PROT_INFO_MAGIC: u16 = 0x6908;
 const DEFAULT_MAX_ALIGN: usize = 8;
 const MAGIC_SIZE: usize = 16;
 
+const F_ENCRYPTED_AES128: u32 = 0x04;
+const F_ENCRYPTED_AES256: u32 = 0x08;
 const F_NON_BOOTABLE: u32 = 0x10;
 const F_RAM_LOAD: u32 = 0x20;
 const F_ROM_FIXED: u32 = 0x100;
@@ -27,6 +29,9 @@ pub mod tlv {
     pub const ECDSASIG: u8 = 0x22;
     pub const ED25519: u8 = 0x24;
     pub const SIG_PURE: u8 = 0x25;
+    pub const ENCEC256: u8 = 0x32;
+    pub const ENCX25519: u8 = 0x33;
+    pub const ENCX25519_SHA512: u8 = 0x34;
     pub const SEC_CNT: u8 = 0x50;
 }
 
@@ -179,6 +184,12 @@ pub struct Opts {
     pub public_key_full: bool,
     pub sha: Option<Sha>,
     pub pure: bool,
+    pub aes256: bool,
+    pub clear: bool,
+    pub hmac_sha: Sha,
+    pub save_enctlv: bool,
+    /// Some(ENC TLV value length) when encrypting; sizes the trailer key slots.
+    pub enc_tlv_len: Option<usize>,
 }
 
 impl Opts {
@@ -195,13 +206,18 @@ impl Opts {
         MAGIC_SIZE.next_multiple_of(self.max_align)
     }
 
-    // ponytail: no encryption key slots yet; add them with --encrypt.
     pub fn trailer_size(&self) -> Result<usize> {
         if self.overwrite_only {
             return Ok(self.max_align * 2 + self.magic_align_size());
         }
         ensure!([1, 2, 4, 8, 16, 32].contains(&self.align), "Invalid alignment: {}", self.align);
-        Ok(self.max_sectors * 3 * self.align + self.max_align * 4 + self.magic_align_size())
+        let mut t = self.max_sectors * 3 * self.align + self.max_align * 4 + self.magic_align_size();
+        if let Some(len) = self.enc_tlv_len {
+            // two key slots; image.py sizes plain slots for 16 bytes even with AES-256
+            let slot = if self.save_enctlv { len } else { 16 };
+            t += slot.next_multiple_of(self.max_align) * 2;
+        }
+        Ok(t)
     }
 
     /// Offset of image_ok from the end of the slot.
@@ -223,9 +239,15 @@ impl Opts {
 }
 
 /// Image.load() + Image.create(): returns header + body + protected TLVs + TLVs.
-pub fn create(input: &[u8], o: &Opts, key: Option<&Key>) -> Result<Vec<u8>> {
+pub fn create(input: &[u8], o: &Opts, key: Option<&Key>, enc: Option<&EncKey>) -> Result<Vec<u8>> {
     if let Some(k) = key {
         ensure!(k.is_private(), "Cannot sign with a public-only PEM; signing requires the private key.");
+    }
+    if let (Some(Key::P256(_)), Some(EncKey::X25519(_))) = (key, enc) {
+        bail!("Signing and encryption must use the same type of key");
+    }
+    if let Some(e) = enc {
+        e.check_hmac(o.hmac_sha)?;
     }
     ensure!(!(o.pure && o.sha.is_some()), "Pure signatures, currently, enforces preferred hash algorithm, and forbids sha selection by user.");
     ensure!(o.header_size >= IMAGE_HEADER_SIZE, "Minimum value for -H/--header-size is {IMAGE_HEADER_SIZE}");
@@ -241,6 +263,11 @@ pub fn create(input: &[u8], o: &Opts, key: Option<&Key>) -> Result<Vec<u8>> {
         o.pad_header || payload[..o.header_size].iter().all(|&b| b == 0),
         "Header padding was not requested and image does not start with zeros"
     );
+
+    if enc.is_some() {
+        // AES-CTR works on whole blocks
+        payload.resize(payload.len().next_multiple_of(16), 0);
+    }
 
     let sha = select_sha(key, o.sha, o.pure)?;
     let e = o.endian;
@@ -261,6 +288,9 @@ pub fn create(input: &[u8], o: &Opts, key: Option<&Key>) -> Result<Vec<u8>> {
     if o.non_bootable {
         flags |= F_NON_BOOTABLE;
     }
+    if enc.is_some() {
+        flags |= if o.aes256 { F_ENCRYPTED_AES256 } else { F_ENCRYPTED_AES128 };
+    }
     let img_size = u32::try_from(payload.len() - o.header_size).context("image too large")?;
     let v = o.version;
     let mut hdr = Vec::with_capacity(IMAGE_HEADER_SIZE);
@@ -277,6 +307,7 @@ pub fn create(input: &[u8], o: &Opts, key: Option<&Key>) -> Result<Vec<u8>> {
     payload[..IMAGE_HEADER_SIZE].copy_from_slice(&hdr);
 
     // Protected TLVs are part of the hashed / signed region.
+    let body_end = payload.len();
     payload.extend(&prot);
 
     let mut tlvs = Tlv::new(e, TLV_INFO_MAGIC);
@@ -294,6 +325,19 @@ pub fn create(input: &[u8], o: &Opts, key: Option<&Key>) -> Result<Vec<u8>> {
         }
         tlvs.add(k.sig_tlv(), &k.sign(&payload, &digest, o.pure)?);
     }
+
+    // Hash and signature cover the plaintext; only the body is encrypted.
+    payload.truncate(body_end);
+    if let Some(e) = enc {
+        let mut plainkey = vec![0; if o.aes256 { 32 } else { 16 }];
+        rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut plainkey);
+        let (kind, enctlv) = e.wrap(&plainkey, o.hmac_sha)?;
+        tlvs.add(kind, &enctlv);
+        if !o.clear {
+            aes_ctr(&plainkey, &mut payload[o.header_size..]);
+        }
+    }
+    payload.extend(&prot);
     payload.extend(tlvs.get());
 
     if o.slot_size > 0 {
