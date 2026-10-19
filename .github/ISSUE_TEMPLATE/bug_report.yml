@@ -1,0 +1,37 @@
+name: Bug report
+description: imgtool-rs crashes, errors out, or produces different output than the Python imgtool
+labels: [bug]
+body:
+  - type: textarea
+    id: command
+    attributes:
+      label: Command line
+      description: The exact imgtool-rs command you ran.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Error output, or how the output differs from the Python imgtool.
+    validations:
+      required: true
+  - type: textarea
+    id: python
+    attributes:
+      label: Python imgtool result
+      description: The same command run with mcuboot/scripts/imgtool.py, if possible.
+  - type: input
+    id: version
+    attributes:
+      label: Versions
+      description: "`imgtool version` for both tools, and your OS"
+      placeholder: "imgtool-rs 0.1.0, imgtool 2.5.0, Ubuntu 24.04"
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: >
+        Never attach private signing or encryption keys. Generate a throwaway key with
+        `imgtool keygen` to reproduce. For security issues use SECURITY.md instead.
