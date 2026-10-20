@@ -21,11 +21,26 @@ with the MCUboot project. Please report fwsign problems here, not to MCUboot.
 
 ## Install
 
+**Prebuilt binaries.** Download an archive from the
+[releases page](https://github.com/amazeng-co/fwsign/releases). Builds are available for:
+
+- Linux x86_64 and aarch64 (static, no dependencies),
+- macOS x86_64 and arm64,
+- Windows x86_64.
+
+Each release includes a `SHA256SUMS` file. To install on Linux:
+
 ```sh
-cargo install --locked --git https://github.com/amazeng-co/fwsign
+curl -LO https://github.com/amazeng-co/fwsign/releases/download/v0.1.0/fwsign-v0.1.0-x86_64-unknown-linux-musl.tar.gz
+tar xzf fwsign-v0.1.0-x86_64-unknown-linux-musl.tar.gz
+sudo install fwsign-v0.1.0-x86_64-unknown-linux-musl/fwsign /usr/local/bin/
 ```
 
-This needs Rust 1.85 or newer.
+**From source.** This needs Rust 1.85 or newer:
+
+```sh
+cargo install --locked --git https://github.com/amazeng-co/fwsign --tag v0.1.0
+```
 
 ## Command line
 
@@ -80,7 +95,7 @@ manifest:
       import: true
     - name: fwsign
       remote: amazeng-co
-      revision: main        # pin a tag or commit for reproducible builds
+      revision: v0.1.0
       path: modules/tools/fwsign
 ```
 
@@ -88,7 +103,7 @@ manifest:
 
 ```sh
 west update fwsign
-cargo install --locked --path modules/tools/fwsign
+cargo install --locked --path modules/tools/fwsign   # or put a prebuilt binary on PATH
 ```
 
 ### 3. Build as usual
