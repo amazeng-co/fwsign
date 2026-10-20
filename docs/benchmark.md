@@ -1,4 +1,4 @@
-# Benchmark: imgtool-rs vs Python imgtool
+# Benchmark: fwsign vs Python imgtool
 
 ## Summary
 
@@ -12,11 +12,13 @@
 
 ## Zephyr end-to-end check
 
-This check uses Zephyr v4.3.0 with the proposed `cmake/mcuboot.cmake` change, which runs native
-`IMGTOOL` executables directly instead of through `${PYTHON_EXECUTABLE}`. The application is
-`samples/hello_world` for `nrf52840dk/nrf52840` with `CONFIG_BOOTLOADER_MCUBOOT=y` and an Ed25519
-signing key (`root-ed25519.pem` from MCUboot). Each configuration was built twice, once with
-`-DIMGTOOL=mcuboot/scripts/imgtool.py` and once with `-DIMGTOOL=target/release/imgtool`.
+This check uses unmodified Zephyr v4.3.0. The application is `samples/hello_world` for
+`nrf52840dk/nrf52840` with `CONFIG_BOOTLOADER_MCUBOOT=y` and an Ed25519 signing key
+(`root-ed25519.pem` from MCUboot). Each configuration was built twice:
+
+- once with MCUboot's `scripts/imgtool.py`,
+- once with the fwsign Zephyr module added via `-DZEPHYR_EXTRA_MODULES`. The module sets
+  `SIGNING_SCRIPT`, so Zephyr's own `cmake/mcuboot.cmake` runs fwsign.
 
 | Configuration | Output | Result |
 |---|---|---|
@@ -29,13 +31,16 @@ signing key (`root-ed25519.pem` from MCUboot). Each configuration was built twic
 ephemeral ECDH key. Both files were decrypted with an independent ECIES implementation (Python
 `cryptography`) and the result was checked against the image hash TLV.
 
-`build.ninja` confirms that the native binary is called directly and the Python script still goes
-through the interpreter:
+The configure log and `build.ninja` of the module build confirm that fwsign is the tool being run:
 
 ```
-/usr/bin/python .../mcuboot/scripts/imgtool.py sign ...
-.../imgtool-rs/target/release/imgtool sign ...
+-- Including signing script: .../fwsign/zephyr/fwsign.cmake
+-- Signing MCUboot images with .../fwsign/target/release/fwsign
+.../fwsign/target/release/fwsign sign --version 0.0.0+0 --header-size 0x200 ...
 ```
+
+The binary was found both through `-DFWSIGN=<path>` and through `PATH`. When it is missing, the
+configure step fails with installation instructions.
 
 ### Signing step time in that build
 
@@ -43,7 +48,7 @@ The encrypted configuration runs `imgtool sign` four times after linking: `.bin`
 `--clear` `.hex` and encrypted `.hex` (21 KiB image, 472 KiB slot). Those four commands were taken
 from `build.ninja` and run back to back, 30 times:
 
-| | Python imgtool | imgtool-rs | Speedup |
+| | Python imgtool | fwsign | Speedup |
 |---|---:|---:|---:|
 | 4 × `imgtool sign` | 251.6 ms ± 4.3 | 3.3 ms ± 0.2 | 75.9× |
 
@@ -59,12 +64,12 @@ The images are random data. `sign` uses the arguments Zephyr passes for a swap-m
 | CPU | 12th Gen Intel Core i5-12400F (6 cores / 12 threads) |
 | OS | Ubuntu 22.04.5 LTS, Linux 5.15 |
 | Python imgtool | 2.5.0rc2 (mcuboot `e19ad039b486`), Python 3.10.12, cryptography 50.0.2 in a clean venv |
-| imgtool-rs | 0.1.0, `cargo build --release` (rustc 1.87.0) |
+| fwsign | 0.1.0, `cargo build --release` (rustc 1.87.0) |
 | Method | 30 runs per case after 2 warm-up runs. Median wall time of the whole process ± interquartile range |
 
 ### Time per invocation
 
-| Case | Python | Rust | Speedup |
+| Case | Python imgtool | fwsign | Speedup |
 |---|---:|---:|---:|
 | startup (`version`) | 56.8 ms ± 3.6 | 0.5 ms ± 0.1 | 115.3× |
 | keygen ed25519 | 58.7 ms ± 3.1 | 0.5 ms ± 0.0 | 119.2× |
@@ -78,7 +83,7 @@ The images are random data. `sign` uses the arguments Zephyr passes for a swap-m
 
 ### Peak memory (RSS)
 
-| Case | Python | Rust |
+| Case | Python imgtool | fwsign |
 |---|---:|---:|
 | startup (`version`) | 28.2 MiB | 2.8 MiB |
 | keygen ed25519 | 29.7 MiB | 2.9 MiB |
@@ -95,7 +100,7 @@ The images are random data. `sign` uses the arguments Zephyr passes for a swap-m
 | | Size |
 |---|---:|
 | Python imgtool dependencies (cryptography, cffi, pycparser, intelhex, click, cbor2, PyYAML), excluding the interpreter | 21.2 MiB |
-| imgtool-rs binary (needs only the system C library) | 1.3 MiB |
+| fwsign binary (needs only the system C library) | 1.3 MiB |
 
 ## Reading the numbers
 
@@ -119,7 +124,7 @@ python3 -m venv venv
 venv/bin/pip install 'cryptography>=40' 'intelhex>=2.2.1' click cbor2 pyyaml
 cargo build --release
 python3 scripts/bench.py --imgtool-py mcuboot/scripts/imgtool.py \
-    --imgtool-rs target/release/imgtool --python venv/bin/python > report.md
+    --fwsign target/release/fwsign --python venv/bin/python > report.md
 ```
 
 `scripts/bench.py` needs only the Python standard library. Peak memory is measured with
