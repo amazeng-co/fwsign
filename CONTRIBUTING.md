@@ -1,6 +1,6 @@
-# Contributing to imgtool-rs
+# Contributing to fwsign
 
-Thanks for your interest. imgtool-rs aims to be a drop-in replacement for MCUboot's
+Thanks for your interest. fwsign keeps its command line compatible with MCUboot's
 `scripts/imgtool.py`. The Python tool is the reference, so a change is correct when it
 produces what the Python tool produces.
 
@@ -8,7 +8,7 @@ produces what the Python tool produces.
 
 Open an issue using the bug report template. The most useful report contains:
 
-- the exact `imgtool` command line,
+- the exact `fwsign` command line,
 - the same command run with the Python `imgtool`, and its MCUboot commit or version,
 - which output differs (attach both files if you can).
 
@@ -24,7 +24,7 @@ cargo clippy --all-targets -- -D warnings
 
 ### The differential test
 
-`tests/compat.rs` runs the Python imgtool and this binary side by side and compares their output.
+`tests/compat.rs` runs the Python imgtool and fwsign side by side and compares their output.
 Without a Python imgtool the test is skipped, so set it up once:
 
 ```sh

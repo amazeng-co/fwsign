@@ -1,14 +1,14 @@
 [package]
-name = "imgtool-rs"
+name = "fwsign"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
 license = "Apache-2.0"
-description = "Drop-in Rust port of MCUboot's imgtool (sign / verify / keygen / getpub)"
-repository = "https://github.com/amazeng-co/imgtool-rs"
+description = "Sign, verify and encrypt MCUboot firmware images; command line compatible with imgtool"
+repository = "https://github.com/amazeng-co/fwsign"
 
 [[bin]]
-name = "imgtool"
+name = "fwsign"
 path = "src/main.rs"
 
 [dependencies]

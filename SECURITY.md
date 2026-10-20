@@ -1,13 +1,13 @@
 # Security policy
 
-imgtool-rs signs and encrypts firmware images that a bootloader trusts, so security reports are
+fwsign signs and encrypts firmware images that a bootloader trusts, so security reports are
 taken seriously.
 
 ## Reporting a vulnerability
 
 Please **do not open a public issue**. Report privately using one of these:
 
-- GitHub: [Report a vulnerability](https://github.com/amazeng-co/imgtool-rs/security/advisories/new)
+- GitHub: [Report a vulnerability](https://github.com/amazeng-co/fwsign/security/advisories/new)
   (preferred).
 - E-mail: mustafa.kus@amazeng.com.tr
 

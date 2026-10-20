@@ -1,5 +1,5 @@
 name: Missing imgtool feature
-description: An imgtool option or command that imgtool-rs does not support yet
+description: An imgtool option or command that fwsign does not support yet
 labels: [enhancement]
 body:
   - type: input

@@ -198,7 +198,7 @@ impl Tlv {
     }
 }
 
-/// Everything `imgtool sign` needs except the key and the input bytes.
+/// Everything `fwsign sign` needs except the key and the input bytes.
 #[derive(Clone, Debug)]
 pub struct Opts {
     pub version: Version,

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Benchmark imgtool-rs against the Python imgtool and print a Markdown report.
+"""Benchmark fwsign against the Python imgtool and print a Markdown report.
 
-usage: bench.py --imgtool-py mcuboot/scripts/imgtool.py --imgtool-rs target/release/imgtool
+usage: bench.py --imgtool-py mcuboot/scripts/imgtool.py --fwsign target/release/fwsign
                 [--python venv/bin/python] [--runs 20]
 
 Each case runs both tools on the same inputs. Wall time covers the whole
@@ -81,14 +81,14 @@ def tool_output(cmd):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--imgtool-py", required=True)
-    ap.add_argument("--imgtool-rs", required=True)
+    ap.add_argument("--fwsign", required=True)
     ap.add_argument("--python", default=sys.executable, help="interpreter with imgtool's dependencies")
     ap.add_argument("--runs", type=int, default=30)
     a = ap.parse_args()
 
     py = [a.python, a.imgtool_py]
-    rs = [a.imgtool_rs]
-    d = tempfile.mkdtemp(prefix="imgtool-bench-")
+    rs = [a.fwsign]
+    d = tempfile.mkdtemp(prefix="fwsign-bench-")
     p = lambda n: os.path.join(d, n)  # noqa: E731
 
     for kind, name in [("ed25519", "ed.pem"), ("ecdsa-p256", "ec.pem"), ("x25519", "x.pem")]:
@@ -124,7 +124,7 @@ def main():
 
     deps = ["cryptography", "cffi", "pycparser", "intelhex", "click", "cbor2", "PyYAML"]
     dep_bytes = installed_size(a.python, deps)
-    rs_bytes = os.path.getsize(a.imgtool_rs)
+    rs_bytes = os.path.getsize(a.fwsign)
     py_ver = tool_output([a.python, "-c", "import sys, cryptography; print(sys.version.split()[0], cryptography.__version__)"]).split()
 
     cpu = next((l.split(":", 1)[1].strip() for l in open("/proc/cpuinfo") if l.startswith("model name")), platform.processor())
@@ -135,19 +135,19 @@ def main():
 | CPU | {cpu} |
 | OS | {platform.system()} {platform.release()} |
 | Python imgtool | {tool_output(py + ['version'])}, Python {py_ver[0]}, cryptography {py_ver[1]} |
-| imgtool-rs | {tool_output(rs + ['version'])}, release build |
+| fwsign | {tool_output(rs + ['version'])}, release build |
 | Runs | {a.runs} per case after 2 warm-up runs; median wall time of the whole process, ± interquartile range |
 
 ## Time per invocation
 
-| Case | Python | Rust | Speedup |
+| Case | Python imgtool | fwsign | Speedup |
 |---|---:|---:|---:|""")
     for name, (pm, ps, _), (rm, rsd, _) in rows:
         print(f"| {name} | {pm:.1f} ms ± {ps:.1f} | {rm:.1f} ms ± {rsd:.1f} | {pm / rm:.1f}× |")
     print("""
 ## Peak memory (RSS)
 
-| Case | Python | Rust |
+| Case | Python imgtool | fwsign |
 |---|---:|---:|""")
     for name, (_, _, pk), (_, _, rk) in rows:
         mib = lambda k: "n/a" if k is None else f"{k / 1024:.1f} MiB"  # noqa: E731
@@ -158,7 +158,7 @@ def main():
 | | Size |
 |---|---:|
 | Python imgtool dependencies ({', '.join(deps)}), excluding the interpreter | {dep_bytes / 2**20:.1f} MiB |
-| imgtool-rs binary (needs only the system C library) | {rs_bytes / 2**20:.1f} MiB |""")
+| fwsign binary (needs only the system C library) | {rs_bytes / 2**20:.1f} MiB |""")
 
 
 if __name__ == "__main__":
