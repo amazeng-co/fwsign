@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config FWSIGN
+	bool "Sign MCUboot images with fwsign"
+	default y
+	depends on BOOTLOADER_MCUBOOT
+	help
+	  Run the MCUboot post-build signing step with the fwsign binary
+	  instead of MCUboot's Python imgtool. All MCUBOOT_* signing options
+	  are handled by Zephyr's own cmake/mcuboot.cmake as usual; only the
+	  tool it runs changes. fwsign is looked up on PATH, or set
+	  -DFWSIGN=/path/to/fwsign.

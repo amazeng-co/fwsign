@@ -1,0 +1,4 @@
+name: fwsign
+build:
+  cmake: zephyr
+  kconfig: zephyr/Kconfig
